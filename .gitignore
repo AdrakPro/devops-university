@@ -1,0 +1,15 @@
+# Generated credentials and keys
+keys/
+
+# Packer artifacts
+packer/base-kubuntu.box
+packer/output/
+packer/packer_cache/
+packer/http/authorized_keys
+
+# Vagrant state
+.vagrant/
+*.box
+
+# Local ISOs (the build references one outside the repo)
+*.iso
