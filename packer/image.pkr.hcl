@@ -93,10 +93,10 @@ build {
 
   provisioner "shell" {
     inline = [
-      "sudo truncate -s 0 /etc/machine-id",
-      "sudo rm -rf /tmp/* /var/tmp/*",
-      "sudo systemctl enable --now ssh",
-      "sudo sync",
+      "truncate -s 0 /etc/machine-id",
+      "rm -rf /tmp/* /var/tmp/*",
+      "systemctl enable --now ssh",
+      "sync",
     ]
   }
 
