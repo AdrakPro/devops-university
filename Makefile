@@ -1,13 +1,13 @@
-# Kubuntu VM pipeline
+# Ubuntu VM pipeline
 #
 # One Packer base image, three Vagrant VMs, Ansible per-role provisioning.
 # See docs/IMPLEMENTATION_PLAN.md for the full design and commit checkpoints.
 
 SHELL := /bin/bash
 
-ISO ?= $(HOME)/Downloads/kubuntu-26.04.1-desktop-amd64.iso
+ISO ?= $(HOME)/Downloads/ubuntu-24.04.5-live-server-amd64.iso
 KEY := keys/id_ed25519
-BOX := packer/base-kubuntu.box
+BOX := packer/base-ubuntu.box
 
 .PHONY: help keys init validate build box up provision verify destroy clean
 
@@ -25,7 +25,7 @@ help:
 		'  make destroy    Remove the three VMs' \
 		'  make clean      Remove local build and Vagrant state' \
 		'' \
-		'Override the ISO with: make build ISO=/path/to/kubuntu.iso'
+		'Override the ISO with: make build ISO=/path/to/ubuntu.iso'
 
 keys:
 	./scripts/generate-keys.sh
@@ -40,7 +40,7 @@ build: keys
 	./scripts/build-box.sh "$(ISO)"
 
 box: $(BOX)
-	vagrant box add --force base-kubuntu $(BOX)
+	vagrant box add --force base-ubuntu $(BOX)
 
 up: box
 	vagrant up

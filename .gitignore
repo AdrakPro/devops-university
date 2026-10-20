@@ -2,10 +2,10 @@
 keys/
 
 # Packer artifacts
-packer/base-kubuntu.box
+packer/base-ubuntu.box
 packer/output/
 packer/packer_cache/
-packer/http/authorized_keys
+packer/http/user-data
 
 # Vagrant state
 .vagrant/
