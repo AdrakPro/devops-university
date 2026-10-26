@@ -15,7 +15,7 @@ set -euo pipefail
 # ---------------------------------------------------------------- config ----
 
 VIRTUALBOX_REPO_KEY="https://www.virtualbox.org/download/oracle_vbox_2016.asc"
-VIRTUALBOX_REPO="deb [arch=amd64] https://download.virtualbox.org/virtualbox/debian %CODENAME% contrib"
+VIRTUALBOX_REPO="deb [arch=amd64 signed-by=%KEYRING%] https://download.virtualbox.org/virtualbox/debian %CODENAME% contrib"
 
 HASHICORP_REPO_KEY="https://apt.releases.hashicorp.com/gpg"
 HASHICORP_REPO="deb [arch=amd64 signed-by=%KEYRING%] https://apt.releases.hashicorp.com %CODENAME% main"
@@ -60,6 +60,8 @@ cmd_present() { command -v "$1" >/dev/null 2>&1; }
 apt_pkg_present() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "ok installed"; }
 
 # add_keyring <url> <keyring-path>
+# apt's signed-by expects a binary OpenPGP key, while both vendor URLs serve
+# ASCII-armored keys. Dearmor when needed so apt can actually use the keyring.
 add_keyring() {
   local url="$1" dest="$2"
   if [[ -f "$dest" ]]; then
@@ -67,9 +69,15 @@ add_keyring() {
     return 0
   fi
   info "Fetching key -> $dest"
-  local tmp
+  local tmp dearmored
   tmp="$(mktemp)"
-  curl -fsSL "$url" -o "$tmp" || { rm -f "$tmp"; die "failed to download key: $url"; }
+  dearmored="$(mktemp)"
+  curl -fsSL "$url" -o "$tmp" || { rm -f "$tmp" "$dearmored"; die "failed to download key: $url"; }
+  if gpg --dearmor --yes -o "$dearmored" "$tmp" 2>/dev/null; then
+    mv "$dearmored" "$tmp"
+  else
+    rm -f "$dearmored"
+  fi
   as_root install -D -m 0644 -o root -g root "$tmp" "$dest"
   rm -f "$tmp"
 }
@@ -128,7 +136,8 @@ install_virtualbox() {
 
   # Ubuntu's own 'virtualbox' package is often stale; prefer Oracle's repo.
   add_keyring "$VIRTUALBOX_REPO_KEY" /usr/share/keyrings/oracle-virtualbox-2016.gpg
-  add_repo "virtualbox.list" "${VIRTUALBOX_REPO//%CODENAME%/$CODENAME}"
+  add_repo "virtualbox.list" \
+    "$(sed "s|%KEYRING%|/usr/share/keyrings/oracle-virtualbox-2016.gpg|; s|%CODENAME%|$CODENAME|" <<<"$VIRTUALBOX_REPO")"
   apt_update
 
   # Pick the newest virtualbox-7.* the repo offers instead of pinning a
@@ -197,14 +206,23 @@ install_ansible() {
     apt_install software-properties-common
   fi
 
-  if as_root add-apt-repository "${APT_OPTS[@]}" "$ANSIBLE_PPA"; then
+  if as_root add-apt-repository -y "$ANSIBLE_PPA"; then
     apt_update
-    apt_install ansible
+    # The PPA's 'ansible' package pulls in ansible-core; remove the conflicting
+    # distro 'ansible' first if it is already installed.
+    if apt_pkg_present ansible && ! apt_pkg_present ansible-core; then
+      as_root apt-get remove -y ansible
+    fi
+    apt_install ansible-core ansible
   else
     warn "Ansible PPA unavailable; falling back to the distro package"
     apt_install ansible
   fi
   ok "Ansible installed ($(ansible --version 2>/dev/null | head -n1))"
+  if cmd_present ansible-galaxy; then
+    ansible-galaxy collection install community.general >/dev/null 2>&1 \
+      || warn "could not install community.general collection"
+  fi
 }
 
 # ------------------------------------------------------------------ main ----

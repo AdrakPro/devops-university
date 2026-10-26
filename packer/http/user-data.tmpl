@@ -1,0 +1,39 @@
+#cloud-config
+# Autoinstall configuration for Ubuntu 24.04.5 Server.
+# scripts/build-box.sh substitutes the project public key into the
+# authorized-keys entry below so the base box is reachable only with that key.
+autoinstall:
+  version: 1
+  interactive-sections: []
+
+  # Do not refresh the installer snap from the store; use the one on the ISO.
+  refresh-installer:
+    update: false
+
+  identity:
+    hostname: base
+    username: vagrant
+    realname: Vagrant
+    # Placeholder hashed password; password logins are disabled via `ssh`.
+    password: "$6$yG3iHO6CozoxWoXP$pef8rlPmjzmUwNE3Eaz9jS.z6eAK67qnk8H4mJQtnuWwbIVnlvSOARwxHGo9y/kLZs/2e0LUhmLAgpRBC01OO/"
+
+  ssh:
+    install-server: true
+    allow-pw: false
+    authorized-keys:
+      - "__SSH_PUBLIC_KEY__"
+
+  storage:
+    layout:
+      name: direct
+
+  packages:
+    - ufw
+
+  updates: security
+  shutdown: reboot
+
+  late-commands:
+    # Passwordless sudo for the vagrant user so Packer and Ansible can become
+    # root without a password.
+    - "curtin in-target -- sh -c 'echo \"vagrant ALL=(ALL) NOPASSWD:ALL\" >/etc/sudoers.d/vagrant && chmod 0440 /etc/sudoers.d/vagrant'"
