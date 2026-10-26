@@ -1,0 +1,42 @@
+---
+# Central configuration for the movie-viewer deployment.
+#
+# The machine addresses (and the SSH key/user) are defined once in
+# inventory.ini. Everything else lives here; roles reference these variables
+# and contain no hardcoded hosts, ports, paths, or credentials.
+#
+# Override any value at run time, for example:
+#   ansible-playbook site.yml -e "db_password=change-me backend_port=9000"
+# or keep a personal copy outside the repo and pass it with -e @my-values.yml.
+
+# --- application layout ---
+app_root: /opt/movie-viewer
+backend_dir: "{{ app_root }}/backend"
+frontend_dir: "{{ app_root }}/frontend"
+
+# --- database ---
+db_port: 5432
+db_name: movies
+db_user: movie
+db_password: movie
+database_service: postgresql
+
+# --- backend ---
+backend_port: 8000
+backend_service: movie-backend
+
+# --- frontend ---
+frontend_port: 80
+frontend_service: nginx
+# Public URL used by the browser. nginx proxies /movies and /health to the
+# backend, so the backend port never has to be open to the host.
+frontend_url: "http://{{ frontend_host }}{{ (':' ~ frontend_port) if (frontend_port | int) != 80 else '' }}"
+# Minimum Node.js major version (Ubuntu 24.04 ships 18.19; Vite 6 needs 18+).
+node_min_version: 18
+
+# --- derived addresses (read from the inventory, do not edit) ---
+# Groups are used instead of host names so inventory host names stay free.
+database_host: "{{ hostvars[groups['database'][0]]['ansible_host'] }}"
+backend_host: "{{ hostvars[groups['backend'][0]]['ansible_host'] }}"
+frontend_host: "{{ hostvars[groups['frontend'][0]]['ansible_host'] }}"
+database_url: "postgresql+psycopg2://{{ db_user }}:{{ db_password }}@{{ database_host }}:{{ db_port }}/{{ db_name }}"

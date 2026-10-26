@@ -1,0 +1,178 @@
+---
+# End-to-end verification. Uses the same inventory and group_vars as site.yml,
+# so it checks the values actually deployed.
+#
+#   cd ansible && ansible-playbook verify.yml
+
+- name: Verify hardening and role-scoped firewall rules
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the ufw status
+      ansible.builtin.command: ufw status verbose
+      register: ufw_status
+      changed_when: false
+
+    - name: Assert ufw is active and denies incoming traffic
+      ansible.builtin.assert:
+        that:
+          - "'Status: active' in ufw_status.stdout"
+          - "'Default: deny (incoming)' in ufw_status.stdout"
+        fail_msg: "ufw is not active with the expected default policy"
+        success_msg: "ufw is active with default deny incoming"
+
+    - name: Read the effective sshd configuration
+      ansible.builtin.command: sshd -T
+      register: sshd_effective
+      changed_when: false
+
+    - name: Assert root SSH login is disabled
+      ansible.builtin.assert:
+        that:
+          - "'permitrootlogin no' in sshd_effective.stdout"
+        fail_msg: "PermitRootLogin is not disabled"
+        success_msg: "PermitRootLogin is disabled"
+
+    - name: Assert the database rule only allows the backend
+      ansible.builtin.assert:
+        that:
+          - "(db_port ~ '/tcp') in ufw_status.stdout"
+          - "backend_host in ufw_status.stdout"
+        fail_msg: "The database firewall rule is not scoped to the backend"
+        success_msg: "Port {{ db_port }} is allowed only from {{ backend_host }}"
+      when: "'database' in group_names"
+
+    - name: Assert the backend rule only allows the frontend
+      ansible.builtin.assert:
+        that:
+          - "(backend_port ~ '/tcp') in ufw_status.stdout"
+          - "frontend_host in ufw_status.stdout"
+        fail_msg: "The backend firewall rule is not scoped to the frontend"
+        success_msg: "Port {{ backend_port }} is allowed only from {{ frontend_host }}"
+      when: "'backend' in group_names"
+
+    - name: Assert the frontend port is open
+      ansible.builtin.assert:
+        that:
+          - "(frontend_port ~ '/tcp') in ufw_status.stdout"
+        fail_msg: "The frontend port is not allowed"
+        success_msg: "Port {{ frontend_port }} is allowed"
+      when: "'frontend' in group_names"
+
+    - name: Select the service expected on this host
+      ansible.builtin.set_fact:
+        expected_service: >-
+          {{ database_service if 'database' in group_names
+             else backend_service if 'backend' in group_names
+             else frontend_service }}
+
+    - name: Assert the expected service is active
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - "{{ expected_service }}"
+      register: service_state
+      changed_when: false
+      failed_when: service_state.stdout != 'active'
+
+- name: Verify the database is reachable only from the backend
+  hosts: all
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Probe the database port from the other tiers
+      ansible.builtin.shell: |
+        if timeout 3 bash -c '</dev/tcp/{{ database_host }}/{{ db_port }}'; then
+          echo OPEN
+        else
+          echo BLOCKED
+        fi
+      register: db_probe
+      changed_when: false
+      when: "'database' not in group_names"
+
+    - name: Assert only the backend can reach the database
+      ansible.builtin.assert:
+        that:
+          - "db_probe.stdout == ('OPEN' if 'backend' in group_names else 'BLOCKED')"
+        fail_msg: "{{ inventory_hostname }} saw the database port as {{ db_probe.stdout }}"
+        success_msg: "{{ inventory_hostname }} sees the database port as {{ db_probe.stdout }}"
+      when: "'database' not in group_names"
+
+- name: Verify the backend is reachable only from the frontend
+  hosts: all
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Probe the backend port from the other tiers
+      ansible.builtin.shell: |
+        if timeout 3 bash -c '</dev/tcp/{{ backend_host }}/{{ backend_port }}'; then
+          echo OPEN
+        else
+          echo BLOCKED
+        fi
+      register: be_probe
+      changed_when: false
+      when: "'backend' not in group_names"
+
+    - name: Assert only the frontend can reach the backend
+      ansible.builtin.assert:
+        that:
+          - "be_probe.stdout == ('OPEN' if 'frontend' in group_names else 'BLOCKED')"
+        fail_msg: "{{ inventory_hostname }} saw the backend port as {{ be_probe.stdout }}"
+        success_msg: "{{ inventory_hostname }} sees the backend port as {{ be_probe.stdout }}"
+      when: "'backend' not in group_names"
+
+- name: Verify the application chain
+  hosts: frontend
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Call the backend health endpoint
+      ansible.builtin.uri:
+        url: "http://{{ backend_host }}:{{ backend_port }}/health"
+        return_content: true
+      register: health
+      failed_when: health.status != 200 or health.json.status != 'ok'
+
+    - name: Call the movies endpoint directly on the backend
+      ansible.builtin.uri:
+        url: "http://{{ backend_host }}:{{ backend_port }}/movies"
+        return_content: true
+      register: movies
+      failed_when: movies.status != 200 or (movies.json | length) < 1
+
+    - name: Call the movies endpoint through the frontend proxy
+      ansible.builtin.uri:
+        url: "{{ frontend_url }}/movies"
+        return_content: true
+      register: proxied_movies
+      failed_when: proxied_movies.status != 200 or (proxied_movies.json | length) < 1
+
+    - name: Fetch the frontend page
+      ansible.builtin.uri:
+        url: "http://{{ frontend_host }}/"
+        return_content: true
+      register: page
+      failed_when: page.status != 200 or 'id="root"' not in page.content
+
+    - name: Check that the built bundle uses the frontend as its API base
+      ansible.builtin.command:
+        argv:
+          - grep
+          - -r
+          - -l
+          - "{{ frontend_url }}"
+          - "{{ frontend_dir }}/dist"
+      register: bundle_api
+      changed_when: false
+
+    - name: Report the verified application chain
+      ansible.builtin.debug:
+        msg:
+          - "Frontend: {{ frontend_url }}/"
+          - "Backend:  http://{{ backend_host }}:{{ backend_port }}/ (proxied by the frontend)"
+          - "Movies returned directly: {{ movies.json | length }}"
+          - "Movies returned through the proxy: {{ proxied_movies.json | length }} ({{ proxied_movies.json | map(attribute='title') | join(', ') }})"

@@ -1,0 +1,86 @@
+---
+# nginx + built React app. The API URL is rendered from group_vars, and the
+# frontend address is only used to expose the site.
+
+- name: Install nginx and Node.js
+  ansible.builtin.apt:
+    name:
+      - nginx
+      - nodejs
+      - npm
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Read the Node.js version
+  ansible.builtin.command: node --version
+  register: node_version
+  changed_when: false
+
+- name: Require a supported Node.js version
+  ansible.builtin.assert:
+    that: node_version.stdout[1:] is version(node_min_version | string, '>=')
+    fail_msg: "Node.js {{ node_version.stdout }} is older than the required {{ node_min_version }}."
+    success_msg: "Node.js {{ node_version.stdout }} is supported."
+
+- name: Create the application directory
+  ansible.builtin.file:
+    path: "{{ frontend_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Copy the frontend source
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../src/frontend/"
+    dest: "{{ frontend_dir }}/"
+    mode: preserve
+
+- name: Install frontend dependencies
+  ansible.builtin.command:
+    argv:
+      - npm
+      - ci
+      - --no-audit
+      - --no-fund
+    chdir: "{{ frontend_dir }}"
+    creates: "{{ frontend_dir }}/node_modules/.package-lock.json"
+
+# VITE_API_URL is read at build time. It points at the frontend itself: nginx
+# proxies /movies and /health to the backend, so the browser never needs direct
+# access to the backend port. The build runs on every pass: it is cheap and
+# keeps source changes reflected without an extra change-detection heuristic.
+- name: Build the frontend
+  ansible.builtin.command:
+    argv:
+      - npm
+      - run
+      - build
+    chdir: "{{ frontend_dir }}"
+  environment:
+    VITE_API_URL: "{{ frontend_url }}"
+
+- name: Install the nginx site
+  ansible.builtin.template:
+    src: movie-viewer.conf.j2
+    dest: /etc/nginx/sites-available/movie-viewer.conf
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable the nginx site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/movie-viewer.conf
+    dest: /etc/nginx/sites-enabled/movie-viewer.conf
+    state: link
+  notify: Reload nginx
+
+- name: Disable the nginx default site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Allow the frontend port
+  community.general.ufw:
+    rule: allow
+    port: "{{ frontend_port }}"
+    proto: tcp
