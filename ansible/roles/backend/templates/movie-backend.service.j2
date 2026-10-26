@@ -1,0 +1,16 @@
+[Unit]
+Description=Movie Viewer FastAPI backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ ansible_user }}
+WorkingDirectory={{ backend_dir }}
+Environment="DATABASE_URL={{ database_url }}"
+ExecStart={{ backend_dir }}/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port {{ backend_port }}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

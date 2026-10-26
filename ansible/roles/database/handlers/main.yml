@@ -1,0 +1,7 @@
+---
+# listen_addresses only takes effect at postmaster start, so restart rather
+# than reload.
+- name: Restart PostgreSQL
+  ansible.builtin.service:
+    name: "{{ database_service }}"
+    state: restarted

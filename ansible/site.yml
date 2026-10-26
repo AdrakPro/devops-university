@@ -1,0 +1,27 @@
+---
+# Three-tier movie viewer. Run from this directory:
+#   ansible-playbook site.yml
+
+- name: Common configuration and hardening
+  hosts: all
+  become: true
+  roles:
+    - common
+
+- name: PostgreSQL database
+  hosts: database
+  become: true
+  roles:
+    - database
+
+- name: FastAPI backend
+  hosts: backend
+  become: true
+  roles:
+    - backend
+
+- name: React frontend
+  hosts: frontend
+  become: true
+  roles:
+    - frontend

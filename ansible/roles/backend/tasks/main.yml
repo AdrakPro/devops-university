@@ -1,0 +1,57 @@
+---
+# FastAPI/uvicorn backend. The database URL and port come from
+# group_vars/all.yml; nothing is hardcoded here.
+
+- name: Install Python packaging tools
+  ansible.builtin.apt:
+    name: python3-venv
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the application directory
+  ansible.builtin.file:
+    path: "{{ backend_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Copy the backend source
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../src/backend/"
+    dest: "{{ backend_dir }}/"
+    mode: preserve
+
+- name: Create the virtualenv
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -m
+      - venv
+      - "{{ backend_dir }}/.venv"
+    creates: "{{ backend_dir }}/.venv/bin/python"
+
+- name: Install the Python requirements
+  ansible.builtin.pip:
+    requirements: "{{ backend_dir }}/requirements.txt"
+    virtualenv: "{{ backend_dir }}/.venv"
+    state: present
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: movie-backend.service.j2
+    dest: "/etc/systemd/system/{{ backend_service }}.service"
+    mode: "0644"
+  notify: Reload systemd and restart backend
+
+- name: Enable and start the backend service
+  ansible.builtin.service:
+    name: "{{ backend_service }}"
+    state: started
+    enabled: true
+
+- name: Allow the backend port only from the frontend VM
+  community.general.ufw:
+    rule: allow
+    port: "{{ backend_port }}"
+    proto: tcp
+    from_ip: "{{ frontend_host }}"

@@ -1,0 +1,132 @@
+---
+# PostgreSQL for the movie viewer. Every value comes from group_vars/all.yml;
+# the backend address is read from the inventory group.
+
+- name: Install PostgreSQL
+  ansible.builtin.apt:
+    name: postgresql
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure PostgreSQL is running and enabled
+  ansible.builtin.service:
+    name: "{{ database_service }}"
+    state: started
+    enabled: true
+
+# The configuration directory embeds the installed major version, so discover
+# it instead of hardcoding a version-specific path.
+- name: Discover the PostgreSQL cluster
+  ansible.builtin.command: pg_lsclusters -h
+  register: pg_clusters
+  changed_when: false
+  check_mode: false
+
+- name: Set the PostgreSQL configuration directory
+  ansible.builtin.set_fact:
+    pg_conf_dir: "/etc/postgresql/{{ pg_clusters.stdout_lines[0].split()[0] }}/{{ pg_clusters.stdout_lines[0].split()[1] }}"
+
+- name: Check whether the application role exists
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -tAc
+      - "SELECT 1 FROM pg_roles WHERE rolname = '{{ db_user }}'"
+  become_user: postgres
+  register: pg_role_check
+  changed_when: false
+  check_mode: false
+
+- name: Create the application role
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -c
+      - "CREATE ROLE \"{{ db_user }}\" LOGIN PASSWORD '{{ db_password }}'"
+  become_user: postgres
+  when: pg_role_check.stdout | trim != '1'
+
+- name: Check whether the application database exists
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -tAc
+      - "SELECT 1 FROM pg_database WHERE datname = '{{ db_name }}'"
+  become_user: postgres
+  register: pg_db_check
+  changed_when: false
+  check_mode: false
+
+- name: Create the application database
+  ansible.builtin.command:
+    argv:
+      - createdb
+      - -O
+      - "{{ db_user }}"
+      - "{{ db_name }}"
+  become_user: postgres
+  when: pg_db_check.stdout | trim != '1'
+
+- name: Copy the schema and seed data
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../src/database/init.sql"
+    dest: /tmp/movie-viewer-init.sql
+    mode: "0644"
+
+- name: Check whether the movies table already exists
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -h
+      - 127.0.0.1
+      - -U
+      - "{{ db_user }}"
+      - -d
+      - "{{ db_name }}"
+      - -tAc
+      - "SELECT to_regclass('public.movies') IS NOT NULL"
+  environment:
+    PGPASSWORD: "{{ db_password }}"
+  register: movies_table_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Apply the schema and seed data
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -h
+      - 127.0.0.1
+      - -U
+      - "{{ db_user }}"
+      - -d
+      - "{{ db_name }}"
+      - -f
+      - /tmp/movie-viewer-init.sql
+  environment:
+    PGPASSWORD: "{{ db_password }}"
+  when: movies_table_check.stdout | trim != 't'
+
+- name: Listen on all interfaces
+  ansible.builtin.lineinfile:
+    path: "{{ pg_conf_dir }}/postgresql.conf"
+    regexp: '^\s*#?\s*listen_addresses\s*=.*$'
+    line: "listen_addresses = '*'"
+  notify: Restart PostgreSQL
+
+- name: Allow the backend VM to authenticate over TCP
+  ansible.builtin.lineinfile:
+    path: "{{ pg_conf_dir }}/pg_hba.conf"
+    regexp: '^host\s+{{ db_name | regex_escape }}\s+{{ db_user | regex_escape }}\s+{{ backend_host | regex_escape }}/32\s+'
+    line: "host    {{ db_name }}    {{ db_user }}    {{ backend_host }}/32    scram-sha-256"
+    insertbefore: '^# IPv6 local connections:'
+  notify: Restart PostgreSQL
+
+- name: Allow PostgreSQL only from the backend VM
+  community.general.ufw:
+    rule: allow
+    port: "{{ db_port }}"
+    proto: tcp
+    from_ip: "{{ backend_host }}"
