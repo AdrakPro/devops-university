@@ -7,7 +7,6 @@ VM_CPUS   = ENV.fetch("VM_CPUS", "1").to_i
 Vagrant.configure("2") do |config|
   config.vm.box = BOX_NAME
 
-  # packer/http/user-data.tmpl
   config.ssh.username = SSH_USER
   config.ssh.private_key_path = SSH_KEY
   config.ssh.insert_key = false
