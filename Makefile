@@ -8,6 +8,7 @@ SHELL := /bin/bash
 ISO ?= $(HOME)/Downloads/ubuntu-24.04.5-live-server-amd64.iso
 KEY := keys/id_ed25519
 BOX := packer/base-ubuntu.box
+ANSIBLE_ARGS ?=
 
 .PHONY: help keys init validate build box up provision verify destroy clean
 
@@ -19,13 +20,14 @@ help:
 		'  make validate   Validate the Packer template' \
 		'  make build      Build $(BOX)' \
 		'  make box        Register the box with Vagrant' \
-		'  make up         Register the box and start the three VMs' \
-		'  make provision  Re-run Ansible over the running VMs' \
+		'  make up         Start the three VMs (no provisioning)' \
+		'  make provision  Configure the VMs with Ansible' \
 		'  make verify     Run the end-to-end checks' \
 		'  make destroy    Remove the three VMs' \
 		'  make clean      Remove local build and Vagrant state' \
 		'' \
-		'Override the ISO with: make build ISO=/path/to/ubuntu.iso'
+		'Override the ISO with: make build ISO=/path/to/ubuntu.iso' \
+		'Extra Ansible arguments: make provision ANSIBLE_ARGS="-e db_password=..."'
 
 keys:
 	./scripts/generate-keys.sh
@@ -43,13 +45,13 @@ box: $(BOX)
 	vagrant box add --force base-ubuntu $(BOX)
 
 up: box
-	vagrant up
+	vagrant up --no-provision
 
 provision:
-	vagrant provision
+	cd ansible && ansible-playbook site.yml $(ANSIBLE_ARGS)
 
 verify:
-	./scripts/verify.sh
+	./scripts/verify.sh $(ANSIBLE_ARGS)
 
 destroy:
 	vagrant destroy -f

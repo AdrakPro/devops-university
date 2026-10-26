@@ -1,3 +1,14 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+#
+# Three-tier movie-viewer environment built from the Packer base box.
+# Vagrant only creates the machines and the host-only network; Ansible is run
+# separately (`cd ansible && ansible-playbook site.yml`), see README.md.
+#
+# Every value can be overridden from the environment, e.g.:
+#   BASE_BOX=my-box DATABASE_IP=10.10.10.10 vagrant up --no-provision
+# Keep the *_IP values in sync with ansible/inventory.ini.
+
 BOX_NAME  = ENV.fetch("BASE_BOX", "base-ubuntu")
 SSH_USER  = ENV.fetch("SSH_USER", "vagrant")
 SSH_KEY   = ENV.fetch("SSH_KEY", File.expand_path("keys/id_ed25519", File.dirname(__FILE__)))
@@ -7,11 +18,13 @@ VM_CPUS   = ENV.fetch("VM_CPUS", "1").to_i
 Vagrant.configure("2") do |config|
   config.vm.box = BOX_NAME
 
-  # packer/http/user-data.tmpl
+  # The base image only accepts the project key and password auth is disabled
+  # (see packer/http/user-data.tmpl). Reuse that key and never replace it.
   config.ssh.username = SSH_USER
   config.ssh.private_key_path = SSH_KEY
   config.ssh.insert_key = false
 
+  # Guest Additions are disabled in the base image.
   config.vm.synced_folder ".", "/vagrant", disabled: true
 
   nodes = {
